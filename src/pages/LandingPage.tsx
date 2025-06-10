@@ -1,178 +1,375 @@
-
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import { Container, Row, Col, Card, Form, Button, ProgressBar, Badge, Alert } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { 
+  faUpload, 
+  faFileAlt, 
+  faSpinner, 
+  faTimes, 
+  faCheckCircle,
+  faExclamationTriangle 
+} from '@fortawesome/free-solid-svg-icons';
 import { useApp } from '../context/AppContext';
-import { apiService } from '../services/api';
-import FileUpload from '../components/FileUpload';
-import LoadingSpinner from '../components/LoadingSpinner';
-import HeroSection from '../components/HeroSection';
-import { Play, FileText, Zap } from 'lucide-react';
+import { useToast } from '../components/ToastContainer';
+import apiService from '../services/api';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { state, uploadResumes, setJobDescription, setCandidates, setLoading, addToHistory } = useApp();
-  const [localJobDescription, setLocalJobDescription] = useState(state.jobDescription);
-  const [localResumes, setLocalResumes] = useState<File[]>(state.resumes);
-  const [charCount, setCharCount] = useState(localJobDescription.length);
+  const { state, uploadResumes, setJobDescription, setJobTitle, setLoading, setError } = useApp();
+  const { addToast } = useToast();
+  
+  const [dragActive, setDragActive] = useState(false);
+  const [jobDescriptionText, setJobDescriptionText] = useState(state.jobDescription);
+  const [jobTitleText, setJobTitleText] = useState(state.jobTitle);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const maxFiles = 10;
+  const maxFileSize = 5 * 1024 * 1024; // 5MB
+  const allowedTypes = ['.pdf', '.doc', '.docx'];
 
-  const handleJobDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    if (value.length <= 5000) {
-      setLocalJobDescription(value);
-      setCharCount(value.length);
+  const validateFiles = useCallback((files: FileList): { validFiles: File[], errors: string[] } => {
+    const errors: string[] = [];
+    const validFiles: File[] = [];
+
+    if (files.length > maxFiles) {
+      errors.push(`Maximum ${maxFiles} files allowed`);
+    }
+
+    Array.from(files).forEach((file, index) => {
+      const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+      
+      if (!allowedTypes.includes(fileExtension)) {
+        errors.push(`${file.name}: Invalid file type. Only PDF, DOC, and DOCX files are allowed`);
+        return;
+      }
+
+      if (file.size > maxFileSize) {
+        errors.push(`${file.name}: File size exceeds 5MB limit`);
+        return;
+      }
+
+      if (index < maxFiles) {
+        validFiles.push(file);
+      }
+    });
+
+    return { validFiles, errors };
+  }, []);
+
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(e.dataTransfer.files);
+    }
+  }, []);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(e.target.files);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleFiles = async (files: FileList) => {
+    const { validFiles, errors } = validateFiles(files);
     
-    if (localResumes.length === 0) {
-      alert('Please upload at least one resume.');
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      errors.forEach(error => {
+        addToast({ type: 'error', message: error });
+      });
       return;
     }
+
+    setValidationErrors([]);
     
-    if (localJobDescription.trim().length < 50) {
-      alert('Job description must be at least 50 characters long.');
+    try {
+      await uploadResumes(validFiles);
+      addToast({ 
+        type: 'success', 
+        message: `Successfully uploaded ${validFiles.length} resume(s)` 
+      });
+    } catch (error) {
+      addToast({ 
+        type: 'error', 
+        message: 'Failed to upload resumes. Please try again.' 
+      });
+    }
+  };
+
+  const removeFile = (index: number) => {
+    const newFiles = state.resumes.filter((_, i) => i !== index);
+    uploadResumes(newFiles.map(resume => resume.file));
+  };
+
+  const handleAnalyze = async () => {
+    // Validation
+    const errors: string[] = [];
+    
+    if (state.resumes.length === 0) {
+      errors.push('Please upload at least one resume');
+    }
+    
+    if (!jobDescriptionText.trim()) {
+      errors.push('Please enter a job description');
+    } else if (jobDescriptionText.trim().length < 50) {
+      errors.push('Job description must be at least 50 characters long');
+    } else if (jobDescriptionText.trim().length > 5000) {
+      errors.push('Job description must be less than 5000 characters');
+    }
+
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      errors.forEach(error => {
+        addToast({ type: 'error', message: error });
+      });
       return;
     }
+
+    setValidationErrors([]);
+    setLoading(true);
+    setError(null);
 
     try {
-      setLoading(true);
-      uploadResumes(localResumes);
-      setJobDescription(localJobDescription);
-      
-      const results = await apiService.compareResumes(localJobDescription, localResumes);
-      setCandidates(results);
-      
-      addToHistory({
-        id: Date.now(),
-        jobTitle: 'Job Analysis',
-        candidateCount: results.length,
-        date: new Date().toLocaleDateString(),
-        avgScore: Math.round(results.reduce((acc, r) => acc + r.matchScore, 0) / results.length)
+      // Update context with current form values
+      setJobDescription(jobDescriptionText);
+      setJobTitle(jobTitleText);
+
+      // For now, we'll navigate to results page
+      // In a real implementation, this would call the API
+      addToast({ 
+        type: 'info', 
+        message: 'Analyzing resumes... This may take a moment.' 
       });
-      
-      navigate('/results');
+
+      // Simulate API call delay
+      setTimeout(() => {
+        setLoading(false);
+        navigate('/results');
+      }, 2000);
+
     } catch (error) {
-      console.error('Error comparing resumes:', error);
-      alert('An error occurred while processing resumes. Please try again.');
-    } finally {
       setLoading(false);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to analyze resumes';
+      setError(errorMessage);
+      addToast({ type: 'error', message: errorMessage });
     }
   };
-
-  if (state.isLoading) {
-    return (
-      <div className="container mt-4">
-        <LoadingSpinner message="Analyzing Candidates..." />
-      </div>
-    );
-  }
 
   return (
     <div>
-      <HeroSection />
-      
-      <div className="container">
-        <div className="row justify-content-center">
-          <div className="col-lg-8">
-            {/* Main Form */}
-            <div className="card shadow-lg fade-in-up">
-              <div className="card-body p-5">
-                <div className="text-center mb-4">
-                  <h3 className="fw-bold text-primary mb-2">Start Your AI Analysis</h3>
-                  <p className="text-muted">Upload resumes and job description to get intelligent candidate rankings</p>
-                </div>
+      {/* Hero Section */}
+      <section className="hero-section">
+        <Container>
+          <Row className="justify-content-center text-center">
+            <Col lg={10}>
+              <div className="hero-content">
+                <h1 className="hero-title">
+                  Hire Smarter with AI-Powered Insights
+                </h1>
+                <p className="hero-subtitle">
+                  Upload resumes, describe your ideal candidate, and let our AI rank the best matches in seconds
+                </p>
+              </div>
+            </Col>
+          </Row>
+        </Container>
+      </section>
 
-                <form onSubmit={handleSubmit}>
-                  {/* File Upload Section */}
-                  <FileUpload 
-                    onFilesSelected={setLocalResumes}
-                    acceptedFiles={localResumes}
-                  />
+      {/* Main Content */}
+      <Container className="py-5">
+        <Row className="justify-content-center">
+          <Col lg={10}>
+            {/* Validation Errors */}
+            {validationErrors.length > 0 && (
+              <Alert variant="danger" className="mb-4">
+                <FontAwesomeIcon icon={faExclamationTriangle} className="me-2" />
+                <strong>Please fix the following issues:</strong>
+                <ul className="mb-0 mt-2">
+                  {validationErrors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
 
-                  {/* Job Description Section */}
-                  <div className="mb-4">
-                    <label htmlFor="jobDescription" className="form-label fw-semibold">
-                      Job Description <span className="text-danger">*</span>
-                    </label>
-                    <div className="position-relative">
-                      <textarea
-                        id="jobDescription"
-                        className="form-control"
-                        rows={8}
-                        placeholder="Paste the complete job description here including required skills, experience, and qualifications..."
-                        value={localJobDescription}
-                        onChange={handleJobDescriptionChange}
-                        required
-                        style={{ resize: 'vertical' }}
-                      />
-                      <div className="position-absolute top-0 end-0 p-2">
-                        <small className={`text-${charCount > 4500 ? 'danger' : charCount > 4000 ? 'warning' : 'muted'}`}>
-                          {charCount}/5000
-                        </small>
-                      </div>
-                    </div>
-                    <div className="form-text">
-                      Include specific skills, experience requirements, and qualifications for better matching accuracy.
-                      <strong> Minimum 50 characters required.</strong>
-                    </div>
-                  </div>
-
-                  {/* Submit Button */}
-                  <div className="d-grid">
-                    <button
-                      type="submit"
-                      className="btn btn-primary btn-lg"
-                      disabled={localResumes.length === 0 || localJobDescription.trim().length < 50}
+            <Row>
+              {/* File Upload Section */}
+              <Col lg={6} className="mb-4">
+                <Card className="custom-card h-100">
+                  <Card.Header className="bg-gradient text-white">
+                    <h5 className="mb-0">
+                      <FontAwesomeIcon icon={faUpload} className="me-2" />
+                      Upload Resumes
+                    </h5>
+                  </Card.Header>
+                  <Card.Body>
+                    <div
+                      className={`upload-card p-4 text-center mb-3 ${dragActive ? 'drag-over' : ''}`}
+                      onDragEnter={handleDrag}
+                      onDragLeave={handleDrag}
+                      onDragOver={handleDrag}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
                     >
-                      <Play size={20} className="me-2" />
-                      Analyze Candidates
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
+                      <FontAwesomeIcon icon={faUpload} size="3x" className="text-muted mb-3" />
+                      <h6>Drag & Drop Resumes Here</h6>
+                      <p className="text-muted mb-3">
+                        or click to browse files
+                      </p>
+                      <small className="text-muted">
+                        Supports PDF, DOC, DOCX • Max {maxFiles} files • 5MB each
+                      </small>
+                      
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docx"
+                        onChange={handleFileInput}
+                        style={{ display: 'none' }}
+                      />
+                    </div>
 
-            {/* Features Section */}
-            <div className="row mt-5">
-              <div className="col-md-4 text-center mb-4">
-                <div className="card h-100 border-0 shadow-sm slide-in-right">
-                  <div className="card-body p-4">
-                    <div className="mb-3" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', width: '70px', height: '70px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
-                      <FileText size={32} className="text-white" />
-                    </div>
-                    <h5 className="fw-bold">Smart Resume Parsing</h5>
-                    <p className="text-muted">AI extracts and analyzes key information from uploaded resumes with high accuracy</p>
-                  </div>
-                </div>
-              </div>
-              <div className="col-md-4 text-center mb-4">
-                <div className="card h-100 border-0 shadow-sm slide-in-right" style={{ animationDelay: '0.2s' }}>
-                  <div className="card-body p-4">
-                    <div className="mb-3" style={{ background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', width: '70px', height: '70px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
-                      <Zap size={32} className="text-white" />
-                    </div>
-                    <h5 className="fw-bold">Intelligent Matching</h5>
-                    <p className="text-muted">Advanced algorithms compare candidates against job requirements with precision</p>
-                  </div>
-                </div>
-              </div>
-              <div className="col-md-4 text-center mb-4">
-                <div className="card h-100 border-0 shadow-sm slide-in-right" style={{ animationDelay: '0.4s' }}>
-                  <div className="card-body p-4">
-                    <div className="mb-3" style={{ background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', width: '70px', height: '70px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
-                      <Play size={32} className="text-white" />
-                    </div>
-                    <h5 className="fw-bold">Instant Results</h5>
-                    <p className="text-muted">Get ranked candidates with detailed skill analysis and insights in seconds</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+                    {/* Uploaded Files List */}
+                    {state.resumes.length > 0 && (
+                      <div>
+                        <h6 className="mb-3">
+                          <FontAwesomeIcon icon={faCheckCircle} className="text-success me-2" />
+                          Uploaded Files ({state.resumes.length})
+                        </h6>
+                        {state.resumes.map((resume, index) => (
+                          <div key={index} className="d-flex align-items-center justify-content-between bg-light p-2 rounded mb-2">
+                            <div className="d-flex align-items-center">
+                              <FontAwesomeIcon icon={faFileAlt} className="text-primary me-2" />
+                              <span className="small">{resume.file.name}</span>
+                            </div>
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="text-danger p-1"
+                              onClick={() => removeFile(index)}
+                            >
+                              <FontAwesomeIcon icon={faTimes} />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card.Body>
+                </Card>
+              </Col>
+
+              {/* Job Description Section */}
+              <Col lg={6} className="mb-4">
+                <Card className="custom-card h-100">
+                  <Card.Header className="bg-gradient text-white">
+                    <h5 className="mb-0">
+                      <FontAwesomeIcon icon={faFileAlt} className="me-2" />
+                      Job Requirements
+                    </h5>
+                  </Card.Header>
+                  <Card.Body>
+                    <Form>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="form-label-modern">
+                          Job Title (Optional)
+                        </Form.Label>
+                        <Form.Control
+                          type="text"
+                          className="form-control-modern"
+                          placeholder="e.g., Senior React Developer"
+                          value={jobTitleText}
+                          onChange={(e) => setJobTitleText(e.target.value)}
+                        />
+                      </Form.Group>
+
+                      <Form.Group className="mb-3">
+                        <Form.Label className="form-label-modern">
+                          Job Description *
+                        </Form.Label>
+                        <Form.Control
+                          as="textarea"
+                          rows={8}
+                          className="form-control-modern"
+                          placeholder="Describe the role, required skills, experience level, and any specific qualifications..."
+                          value={jobDescriptionText}
+                          onChange={(e) => setJobDescriptionText(e.target.value)}
+                          maxLength={5000}
+                        />
+                        <div className="d-flex justify-content-between mt-1">
+                          <small className="text-muted">
+                            Minimum 50 characters required
+                          </small>
+                          <small className="text-muted">
+                            {jobDescriptionText.length}/5000
+                          </small>
+                        </div>
+                      </Form.Group>
+
+                      <Button
+                        className="btn-gradient w-100"
+                        size="lg"
+                        onClick={handleAnalyze}
+                        disabled={state.isLoading}
+                      >
+                        {state.isLoading ? (
+                          <>
+                            <FontAwesomeIcon icon={faSpinner} spin className="me-2" />
+                            Analyzing Resumes...
+                          </>
+                        ) : (
+                          <>
+                            <FontAwesomeIcon icon={faCheckCircle} className="me-2" />
+                            Analyze Resumes
+                          </>
+                        )}
+                      </Button>
+                    </Form>
+                  </Card.Body>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Progress Bar */}
+            {state.isLoading && (
+              <Row className="mt-4">
+                <Col>
+                  <Card className="custom-card">
+                    <Card.Body className="text-center">
+                      <h6 className="mb-3">Processing your resumes...</h6>
+                      <ProgressBar 
+                        animated 
+                        now={uploadProgress} 
+                        className="progress-modern"
+                      />
+                      <small className="text-muted mt-2 d-block">
+                        This may take a few moments depending on the number of resumes
+                      </small>
+                    </Card.Body>
+                  </Card>
+                </Col>
+              </Row>
+            )}
+          </Col>
+        </Row>
+      </Container>
     </div>
   );
 };

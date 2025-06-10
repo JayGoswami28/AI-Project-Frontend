@@ -1,76 +1,93 @@
-
-import React from 'react';
+import React, { useState } from 'react';
+import { Navbar, Nav, Container, Button } from 'react-bootstrap';
 import { Link, useLocation } from 'react-router-dom';
-import { Users, BarChart3, Home, Zap } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { 
+  faHome, 
+  faChartBar, 
+  faHistory, 
+  faCog, 
+  faMoon, 
+  faSun,
+  faBars 
+} from '@fortawesome/free-solid-svg-icons';
 
-const Navbar: React.FC = () => {
+const AppNavbar: React.FC = () => {
+  const { theme, toggleTheme } = useTheme();
   const location = useLocation();
+  const [expanded, setExpanded] = useState(false);
+
+  const navItems = [
+    { path: '/', label: 'Home', icon: faHome },
+    { path: '/results', label: 'Results', icon: faChartBar },
+    { path: '/history', label: 'History', icon: faHistory },
+    { path: '/settings', label: 'Settings', icon: faCog },
+  ];
 
   const isActive = (path: string) => location.pathname === path;
 
+  const handleNavClick = () => {
+    setExpanded(false);
+  };
+
   return (
-    <nav className="navbar navbar-expand-lg sticky-top">
-      <div className="container">
-        <Link className="navbar-brand fw-bold d-flex align-items-center" to="/">
-          <div 
-            className="rounded-circle d-flex align-items-center justify-content-center me-2"
-            style={{
-              width: '40px',
-              height: '40px',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-            }}
-          >
-            <Zap className="text-white" size={20} />
-          </div>
-          HireMatch AI
-        </Link>
-        
-        <button 
-          className="navbar-toggler border-0" 
-          type="button" 
-          data-bs-toggle="collapse" 
-          data-bs-target="#navbarNav"
-          aria-controls="navbarNav"
-          aria-expanded="false"
-          aria-label="Toggle navigation"
+    <Navbar 
+      expand="lg" 
+      fixed="top" 
+      className="navbar-modern"
+      expanded={expanded}
+      onToggle={setExpanded}
+    >
+      <Container>
+        <Navbar.Brand as={Link} to="/" className="navbar-brand">
+          <FontAwesomeIcon icon={faChartBar} className="me-2" />
+          AI Recruiter
+        </Navbar.Brand>
+
+        <Navbar.Toggle 
+          aria-controls="basic-navbar-nav"
+          className="border-0"
         >
-          <span className="navbar-toggler-icon"></span>
-        </button>
-        
-        <div className="collapse navbar-collapse" id="navbarNav">
-          <ul className="navbar-nav ms-auto">
-            <li className="nav-item">
-              <Link 
-                className={`nav-link fw-semibold px-3 ${isActive('/') ? 'active text-primary' : 'text-dark'}`} 
-                to="/"
+          <FontAwesomeIcon icon={faBars} />
+        </Navbar.Toggle>
+
+        <Navbar.Collapse id="basic-navbar-nav">
+          <Nav className="ms-auto align-items-center">
+            {navItems.map((item) => (
+              <Nav.Link
+                key={item.path}
+                as={Link}
+                to={item.path}
+                className={`nav-link ${isActive(item.path) ? 'active' : ''}`}
+                onClick={handleNavClick}
               >
-                <Home size={18} className="me-1" />
-                Home
-              </Link>
-            </li>
-            <li className="nav-item">
-              <Link 
-                className={`nav-link fw-semibold px-3 ${isActive('/results') ? 'active text-primary' : 'text-dark'}`} 
-                to="/results"
+                <FontAwesomeIcon icon={item.icon} className="me-2" />
+                {item.label}
+              </Nav.Link>
+            ))}
+            
+            <div className="nav-link d-flex align-items-center">
+              <Button
+                variant="link"
+                onClick={toggleTheme}
+                className="theme-toggle-btn border-0 p-0 ms-3"
+                aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+                title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
               >
-                <BarChart3 size={18} className="me-1" />
-                Results
-              </Link>
-            </li>
-            <li className="nav-item">
-              <Link 
-                className={`nav-link fw-semibold px-3 ${isActive('/dashboard') ? 'active text-primary' : 'text-dark'}`} 
-                to="/dashboard"
-              >
-                <Users size={18} className="me-1" />
-                Dashboard
-              </Link>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </nav>
+                <div className="theme-toggle">
+                  <FontAwesomeIcon 
+                    icon={theme === 'light' ? faMoon : faSun} 
+                    className="theme-icon"
+                  />
+                </div>
+              </Button>
+            </div>
+          </Nav>
+        </Navbar.Collapse>
+      </Container>
+    </Navbar>
   );
 };
 
-export default Navbar;
+export default AppNavbar;
